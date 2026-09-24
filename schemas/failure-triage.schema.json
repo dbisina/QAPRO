@@ -1,0 +1,28 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://qa-platform/schemas/failure-triage.schema.json",
+  "title": "Test failure triage (failure-triager output)",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["failures"],
+  "properties": {
+    "failures": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["testName", "category", "confidence", "rationale", "suggestedAction"],
+        "properties": {
+          "testName": { "type": "string" },
+          "category": { "enum": ["product-bug", "test-bug", "environment", "flaky", "test-data", "unknown"] },
+          "confidence": { "type": "number", "minimum": 0, "maximum": 1 },
+          "rationale": { "type": "string", "description": "Evidence from the error, trace or log that supports the category" },
+          "suggestedAction": { "enum": ["file-bug", "fix-test", "quarantine", "retry-environment", "investigate"] },
+          "duplicateOf": { "type": ["string", "null"], "description": "Existing bug id/title if this is a known defect" },
+          "bugTitle": { "type": "string" },
+          "reproSteps": { "type": "array", "items": { "type": "string" } }
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,21 @@
+{
+  "id": 1001,
+  "url": "https://dev.azure.com/example/_apis/wit/workItems/1001",
+  "type": "Product Backlog Item",
+  "title": "Customer can pay for an order by card",
+  "state": "Approved",
+  "areaPath": "Shop\\Checkout",
+  "iterationPath": "Shop\\Sprint 14",
+  "priority": 1,
+  "description": "As a customer I want to pay for my basket by card so that I can complete my order.\nUse the new payment provider. Card details are entered on our checkout page.",
+  "acceptanceCriteria": "- Customer can enter card details and pay\n- Payment should be fast\n- Show an error if the payment fails\n- Order is marked as paid",
+  "links": [{ "rel": "Parent", "url": "https://dev.azure.com/example/_apis/wit/workItems/900" }],
+  "parents": [
+    {
+      "id": 900,
+      "type": "Feature",
+      "title": "Online checkout",
+      "description": "Replace the phone-order process with self-service online checkout for UK customers."
+    }
+  ]
+}

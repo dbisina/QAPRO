@@ -1,0 +1,57 @@
+# Steps: run one qa-platform agent headless (src/bin/run-agent.ts).
+# Advisory by default: an agent never fails the build on its own; deterministic gates do that.
+# Kill switch: set QA_AI_GATES=off in the variable group to skip every AI step.
+parameters:
+  - name: agent
+    type: string
+  - name: schema
+    type: string
+  - name: task
+    type: string
+  - name: out
+    type: string
+  - name: input
+    type: string
+    default: ''
+  - name: model            # override the agent's model, e.g. escalate haiku -> sonnet
+    type: string
+    default: ''
+  - name: maxTurns
+    type: number
+    default: 25
+  - name: qaRoot
+    type: string
+    default: $(Build.SourcesDirectory)
+  - name: condition
+    type: string
+    default: succeeded()
+  - name: advisory
+    type: boolean
+    default: true
+
+steps:
+  - bash: npx tsx src/bin/run-agent.ts
+    displayName: 'AI agent: ${{ parameters.agent }}'
+    workingDirectory: ${{ parameters.qaRoot }}
+    condition: and(${{ parameters.condition }}, ne(variables['QA_AI_GATES'], 'off'))
+    continueOnError: ${{ parameters.advisory }}
+    timeoutInMinutes: 30
+    env:
+      QA_AGENT: ${{ parameters.agent }}
+      QA_SCHEMA: ${{ parameters.schema }}
+      QA_TASK: ${{ parameters.task }}
+      QA_OUT: ${{ parameters.out }}
+      QA_INPUT: ${{ parameters.input }}
+      QA_MODEL: ${{ parameters.model }}
+      QA_MAX_TURNS: ${{ parameters.maxTurns }}
+      QA_ENV: $(QA_ENV)
+      # Claude auth: define ONE option in the qa-platform variable group (docs/adr/0004-claude-auth-for-automation.md).
+      ANTHROPIC_API_KEY: $(ANTHROPIC_API_KEY)
+      CLAUDE_CODE_OAUTH_TOKEN: $(CLAUDE_CODE_OAUTH_TOKEN)
+      CLAUDE_CODE_USE_FOUNDRY: $(CLAUDE_CODE_USE_FOUNDRY)
+      ANTHROPIC_FOUNDRY_RESOURCE: $(ANTHROPIC_FOUNDRY_RESOURCE)
+      ANTHROPIC_FOUNDRY_API_KEY: $(ANTHROPIC_FOUNDRY_API_KEY)
+      # Pin exact model versions behind each alias once validated (docs/adr/0003-model-tiering.md).
+      ANTHROPIC_DEFAULT_HAIKU_MODEL: $(ANTHROPIC_DEFAULT_HAIKU_MODEL)
+      ANTHROPIC_DEFAULT_SONNET_MODEL: $(ANTHROPIC_DEFAULT_SONNET_MODEL)
+      ANTHROPIC_DEFAULT_OPUS_MODEL: $(ANTHROPIC_DEFAULT_OPUS_MODEL)

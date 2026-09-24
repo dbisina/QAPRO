@@ -1,0 +1,24 @@
+# OWASP ZAP Automation Framework plan: passive baseline scan with SARIF output (read by src/bin/gate.ts).
+# Run by pipelines/templates/qa-verify.yml for dev and uat only. Active scans belong in the nightly uat suite, never in prod.
+env:
+  contexts:
+    - name: target
+      urls:
+        - ${QA_BASE_URL}
+  parameters:
+    failOnError: true
+    progressToStdout: true
+
+jobs:
+  - type: spider
+    parameters:
+      context: target
+      maxDuration: 5
+  - type: passiveScan-wait
+    parameters:
+      maxDuration: 10
+  - type: report
+    parameters:
+      template: sarif-json
+      reportDir: /zap/wrk/
+      reportFile: zap-baseline

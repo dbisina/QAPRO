@@ -1,0 +1,28 @@
+{
+  "name": "qa-platform",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Claude-driven QA platform: agent definitions, deterministic quality gates and Azure DevOps pipeline templates",
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit",
+    "check": "npm run typecheck && npm test",
+    "agent": "tsx src/bin/run-agent.ts",
+    "gate": "tsx src/bin/gate.ts",
+    "ado": "tsx src/bin/ado.ts"
+  },
+  "dependencies": {
+    "ajv": "^8.20.0",
+    "fast-xml-parser": "^5.11.1"
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.2",
+    "tsx": "^4.23.15",
+    "typescript": "^7.0.2",
+    "vitest": "^4.1.11"
+  }
+}

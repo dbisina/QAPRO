@@ -1,0 +1,4 @@
+# Pipelines and hooks run on Linux agents: keep LF everywhere.
+* text=auto eol=lf
+*.png binary
+*.jpg binary

@@ -1,0 +1,53 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://qa-platform/schemas/req-analysis.schema.json",
+  "title": "Requirement QA analysis (req-analyst output)",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["workItemId", "riskTier", "readiness", "summary", "findings", "proposedAcceptanceCriteria", "openQuestions"],
+  "properties": {
+    "workItemId": { "type": "integer" },
+    "riskTier": { "enum": ["low", "medium", "high"] },
+    "readiness": { "enum": ["ready", "needs-clarification", "blocked"] },
+    "summary": { "type": "string", "minLength": 1, "maxLength": 1500 },
+    "findings": { "type": "array", "items": { "$ref": "#/$defs/finding" } },
+    "proposedAcceptanceCriteria": {
+      "description": "Gherkin scenarios, one scenario per item",
+      "type": "array",
+      "items": { "type": "string", "minLength": 1 }
+    },
+    "openQuestions": { "type": "array", "items": { "type": "string", "minLength": 1 } }
+  },
+  "$defs": {
+    "finding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["dimension", "severity", "title", "detail", "suggestion"],
+      "properties": {
+        "dimension": {
+          "enum": [
+            "functional",
+            "security",
+            "performance",
+            "scalability",
+            "reliability",
+            "usability-ux",
+            "ui",
+            "accessibility",
+            "compatibility",
+            "maintainability",
+            "manageability-observability",
+            "portability-deployability",
+            "data-privacy",
+            "testability"
+          ]
+        },
+        "severity": { "enum": ["critical", "high", "medium", "low", "info"] },
+        "title": { "type": "string", "minLength": 1, "maxLength": 200 },
+        "detail": { "type": "string", "minLength": 1 },
+        "suggestion": { "type": "string", "minLength": 1 },
+        "evidence": { "type": "string", "description": "Quoted text or path:line the finding is based on" }
+      }
+    }
+  }
+}

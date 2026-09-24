@@ -1,0 +1,13 @@
+{
+  "$comment": "Minimum a competent QA analyst must catch for case-001. Scored by recall of mustFindDimensions and exact match on riskTier/readiness.",
+  "riskTier": "high",
+  "readiness": "needs-clarification",
+  "mustFindDimensions": ["security", "performance", "reliability", "data-privacy", "functional", "accessibility"],
+  "mustMention": [
+    "PCI / card data handling (hosted fields or redirect vs raw card data on our page)",
+    "'fast' is not measurable: needs a latency target",
+    "payment failure types (declined, insufficient funds, 3-D Secure, timeout) and their messages",
+    "double charge / idempotency on retry or double submit",
+    "what happens to the order when the provider is down or times out"
+  ]
+}

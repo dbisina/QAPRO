@@ -1,0 +1,27 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://qa-platform/schemas/test-author.schema.json",
+  "title": "Automated tests written (test-author output)",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["filesChanged", "tests", "ranLocally", "notes"],
+  "properties": {
+    "filesChanged": { "type": "array", "items": { "type": "string" } },
+    "tests": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["title", "file", "testCaseId", "status"],
+        "properties": {
+          "title": { "type": "string" },
+          "file": { "type": "string" },
+          "testCaseId": { "type": ["integer", "null"], "description": "ADO Test Case id carried as @TC<id> in the test title/tag" },
+          "status": { "enum": ["passing", "failing-product-bug", "failing-unknown", "not-run"] }
+        }
+      }
+    },
+    "ranLocally": { "type": "boolean" },
+    "notes": { "type": "string" }
+  }
+}

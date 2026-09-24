@@ -1,0 +1,99 @@
+# Work-item lifecycle QA (stages S0/S1 in docs/architecture.md).
+# Trigger: an Azure DevOps Service Hook (work item created / updated) posts to the Incoming WebHook
+# service connection below. Setup steps are in docs/HANDOFF.md, "Azure DevOps setup".
+#
+#   created             -> req-analyst (Epic / Feature / PBI)
+#   updated, State set  -> req-analyst, then test-designer when readiness == ready
+#   updated, no State   -> skipped (our own comments/tags must not re-trigger the pipeline)
+trigger: none
+pr: none
+
+resources:
+  webhooks:
+    - webhook: WorkItemEvent           # alias used in ${{ parameters.WorkItemEvent.* }}
+      connection: qa-workitem-hook     # Incoming WebHook service connection name
+
+variables:
+  - group: qa-platform                 # ANTHROPIC_* / CLAUDE_* auth, QA_PUBLISH, QA_AI_GATES, ...
+  - name: QA_ENV
+    value: none
+  - name: QA_ROOT
+    value: $(Build.SourcesDirectory)
+
+pool:
+  name: qa-pr
+
+steps:
+  - checkout: self
+  # Optional: product docs for the agents (design.md, ADRs, OpenAPI). Declare the repo under resources.repositories.
+  # - checkout: app
+  #   path: s/context/app
+
+  - bash: |
+      set -euo pipefail
+      if [[ "$EVENT_TYPE" == "workitem.updated" && -z "$NEW_STATE" ]]; then
+        echo "State did not change; skipping."
+        echo "##vso[task.setvariable variable=QA_RUN]false"
+        exit 0
+      fi
+      echo "Event $EVENT_TYPE for work item $WORK_ITEM_ID (new state: ${NEW_STATE:-n/a})"
+      echo "##vso[task.setvariable variable=QA_RUN]true"
+      echo "##vso[task.setvariable variable=QA_WORK_ITEM_ID]$WORK_ITEM_ID"
+      echo "##vso[task.setvariable variable=QA_NEW_STATE]$NEW_STATE"
+    displayName: Decide whether to run
+    env:
+      EVENT_TYPE: ${{ parameters.WorkItemEvent.eventType }}
+      WORK_ITEM_ID: ${{ coalesce(parameters.WorkItemEvent.resource.workItemId, parameters.WorkItemEvent.resource.id) }}
+      NEW_STATE: ${{ parameters.WorkItemEvent.resource.fields['System.State'].newValue }}
+
+  - template: templates/setup.yml
+    parameters:
+      qaRoot: $(QA_ROOT)
+
+  - bash: npx tsx src/bin/ado.ts fetch-workitem --id "$(QA_WORK_ITEM_ID)" --out context/work-item.json
+    displayName: Fetch work item and parents
+    condition: and(succeeded(), eq(variables['QA_RUN'], 'true'))
+    env:
+      SYSTEM_ACCESSTOKEN: $(System.AccessToken)
+
+  - template: templates/run-agent.yml
+    parameters:
+      agent: req-analyst
+      schema: schemas/req-analysis.schema.json
+      input: context/work-item.json
+      task: Analyse this work item for QA readiness and quality risks across every dimension.
+      out: context/req-analysis.json
+      advisory: false                  # downstream steps need its output
+      condition: and(succeeded(), eq(variables['QA_RUN'], 'true'))
+
+  - bash: npx tsx src/bin/ado.ts publish-analysis --in context/req-analysis.json
+    displayName: Publish analysis to the work item
+    condition: and(succeeded(), eq(variables['QA_RUN'], 'true'), ne(variables['QA_AI_GATES'], 'off'))
+    env:
+      SYSTEM_ACCESSTOKEN: $(System.AccessToken)
+      QA_PUBLISH: $(QA_PUBLISH)        # "apply" to write; anything else = dry run
+
+  - template: templates/run-agent.yml
+    parameters:
+      agent: test-designer
+      schema: schemas/test-cases.schema.json
+      input: context/work-item.json
+      task: >
+        Design test cases for this work item. The req-analyst output is in context/req-analysis.json;
+        use its proposed acceptance criteria where the original criteria are weak.
+      out: context/test-cases.json
+      condition: and(succeeded(), eq(variables['QA_RUN'], 'true'), eq(variables['QA_READINESS'], 'ready'))
+
+  - bash: npx tsx src/bin/ado.ts publish-test-cases --in context/test-cases.json
+    displayName: Publish test cases to Test Plans
+    condition: and(succeeded(), eq(variables['QA_RUN'], 'true'), eq(variables['QA_READINESS'], 'ready'), ne(variables['QA_AI_GATES'], 'off'))
+    env:
+      SYSTEM_ACCESSTOKEN: $(System.AccessToken)
+      QA_PUBLISH: $(QA_PUBLISH)
+
+  - task: PublishPipelineArtifact@1
+    displayName: Publish agent outputs
+    condition: and(succeededOrFailed(), eq(variables['QA_RUN'], 'true'))
+    inputs:
+      targetPath: context
+      artifact: workitem-qa-$(QA_WORK_ITEM_ID)

@@ -1,0 +1,26 @@
+{
+  "mcpServers": {
+    "azure-devops": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "@azure-devops/mcp",
+        "${ADO_ORG:-your-org}",
+        "--authentication",
+        "${ADO_MCP_AUTH:-azcli}",
+        "-d",
+        "core",
+        "work",
+        "work-items",
+        "test-plans",
+        "wiki",
+        "repositories",
+        "pipelines"
+      ]
+    },
+    "playwright": {
+      "command": "npx",
+      "args": ["-y", "@playwright/mcp@latest"]
+    }
+  }
+}

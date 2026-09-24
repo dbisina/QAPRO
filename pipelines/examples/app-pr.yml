@@ -1,0 +1,28 @@
+# Example: azure-pipelines-pr.yml in an APPLICATION repository.
+# Register it as a pipeline, then add it as a REQUIRED build-validation policy on the main branch:
+# when the QA gate step fails, the pipeline fails and the PR cannot merge.
+trigger: none
+
+resources:
+  repositories:
+    - repository: qa
+      type: git                                # Azure Repos. For GitHub: type: github, endpoint: <service connection>
+      name: YourProject/qa-platform
+      ref: refs/heads/main
+
+variables:
+  - group: qa-platform
+
+jobs:
+  - template: pipelines/templates/qa-pr.yml@qa
+    parameters:
+      # Must write JUnit XML to $QA_RESULTS/junit. Pick the lines for your stack:
+      testCommand: |
+        set -e
+        npm ci
+        PLAYWRIGHT_JUNIT_OUTPUT_FILE="$QA_RESULTS/junit/playwright.xml" npx playwright test --project=api --reporter=junit
+        # .NET:    dotnet test --logger "junit;LogFilePath=$QA_RESULTS/junit/{assembly}.xml"   (JunitXml.TestLogger package)
+        # Python:  pytest --junitxml="$QA_RESULTS/junit/pytest.xml"
+        # Jest:    JEST_JUNIT_OUTPUT_DIR="$QA_RESULTS/junit" npx jest --ci --reporters=default --reporters=jest-junit
+      # Enable in Phase 2 once a baseline score is known:
+      # mutationCommand: npx stryker run --incremental --reporters json && cp reports/mutation/mutation.json "$QA_RESULTS/mutation/"

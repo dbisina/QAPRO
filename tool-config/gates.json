@@ -1,0 +1,33 @@
+{
+  "$comment": "Deterministic gate policy per stage (read by src/bin/gate.ts). requireEvidence = fail closed when missing. Tune thresholds with the team; changes go through PR review.",
+  "stages": {
+    "pr": {
+      "requireEvidence": ["junit", "sarif"],
+      "junit": { "minTotal": 1, "maxFailed": 0 },
+      "sarif": {
+        "maxBySeverity": { "critical": 0, "high": 0 },
+        "maxByLevel": { "error": 0 },
+        "maxByTool": { "gitleaks": 0 }
+      },
+      "mutation": { "minScore": 60 }
+    },
+    "dev": {
+      "requireEvidence": ["junit"],
+      "junit": { "minTotal": 1, "maxFailed": 0 },
+      "sarif": { "maxBySeverity": { "critical": 0, "high": 0 } }
+    },
+    "uat": {
+      "requireEvidence": ["junit", "sarif"],
+      "maxEvidenceAgeHours": 24,
+      "junit": { "minTotal": 1, "maxFailed": 0 },
+      "sarif": {
+        "maxBySeverity": { "critical": 0, "high": 0 },
+        "maxByLevel": { "error": 0 }
+      }
+    },
+    "prod": {
+      "requireEvidence": ["junit"],
+      "junit": { "minTotal": 1, "maxFailed": 0 }
+    }
+  }
+}

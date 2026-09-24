@@ -1,0 +1,122 @@
+# Jobs: PR quality gate for an application repository (usage: pipelines/examples/app-pr.yml).
+# Deterministic tools produce evidence -> src/bin/gate.ts decides -> AI agents explain (advisory).
+#
+# Layout on the agent (agents can only read inside their working directory):
+#   $(QA_ROOT)                      qa-platform checkout (agents run here)
+#   $(QA_ROOT)/context/app          application repo (self)
+#   $(QA_ROOT)/context/qa-results   junit/ sarif/ mutation/ + gate and agent outputs
+parameters:
+  - name: testCommand        # must write JUnit XML into $QA_RESULTS/junit
+    type: string
+  - name: mutationCommand    # optional; must write $QA_RESULTS/mutation/mutation.json (Stryker format)
+    type: string
+    default: ''
+  - name: policy
+    type: string
+    default: tool-config/gates.json
+  - name: pool
+    type: string
+    default: qa-pr
+  - name: qaRepo             # repository resource alias for qa-platform
+    type: string
+    default: qa
+
+jobs:
+  - job: qa_pr
+    displayName: QA gate (PR)
+    pool:
+      name: ${{ parameters.pool }}
+    timeoutInMinutes: 30
+    variables:
+      QA_ROOT: $(Pipeline.Workspace)/s/qa
+      APP_DIR: $(Pipeline.Workspace)/s/qa/context/app
+      QA_RESULTS: $(Pipeline.Workspace)/s/qa/context/qa-results
+      QA_ENV: pr
+    steps:
+      - checkout: ${{ parameters.qaRepo }}
+        path: s/qa
+      - checkout: self
+        path: s/qa/context/app
+        fetchDepth: 0
+
+      - template: setup.yml
+        parameters:
+          qaRoot: $(QA_ROOT)
+
+      - bash: mkdir -p "$QA_RESULTS"/{junit,sarif,mutation}
+        displayName: Prepare results folders
+
+      - bash: ${{ parameters.testCommand }}
+        displayName: Tests
+        workingDirectory: $(APP_DIR)
+        continueOnError: true
+        env:
+          QA_RESULTS: $(QA_RESULTS)
+
+      - ${{ if ne(parameters.mutationCommand, '') }}:
+        - bash: ${{ parameters.mutationCommand }}
+          displayName: Mutation testing (changed code)
+          workingDirectory: $(APP_DIR)
+          continueOnError: true
+          env:
+            QA_RESULTS: $(QA_RESULTS)
+
+      - bash: |
+          docker run --rm -v "$APP_DIR:/src" -v "$QA_RESULTS/sarif:/out" semgrep/semgrep \
+            semgrep scan --config p/default --config p/owasp-top-ten --sarif --output /out/semgrep.sarif /src
+        displayName: SAST (Semgrep)
+        continueOnError: true
+
+      - bash: |
+          docker run --rm -v "$APP_DIR:/repo" -v "$QA_RESULTS/sarif:/out" zricethezav/gitleaks:latest \
+            detect --source /repo --report-format sarif --report-path /out/gitleaks.sarif --exit-code 0
+        displayName: Secrets (gitleaks)
+        continueOnError: true
+
+      - bash: |
+          docker run --rm -v "$APP_DIR:/src" -v "$QA_RESULTS/sarif:/out" aquasec/trivy:latest \
+            fs --scanners vuln,secret,misconfig --format sarif --output /out/trivy.sarif /src
+        displayName: Dependencies, IaC and secrets (Trivy)
+        continueOnError: true
+
+      - task: PublishTestResults@2
+        displayName: Publish test results
+        condition: succeededOrFailed()
+        inputs:
+          testResultsFormat: JUnit
+          testResultsFiles: $(QA_RESULTS)/junit/**/*.xml
+          failTaskOnFailedTests: false
+
+      - bash: >
+          npx tsx src/bin/gate.ts --stage pr --policy "${{ parameters.policy }}"
+          --junit-dir "$QA_RESULTS/junit" --sarif-dir "$QA_RESULTS/sarif"
+          --stryker "$QA_RESULTS/mutation/mutation.json" --out "$QA_RESULTS/gate-pr"
+        displayName: QA gate (deterministic)
+        workingDirectory: $(QA_ROOT)
+
+      - template: run-agent.yml
+        parameters:
+          agent: failure-triager
+          schema: schemas/failure-triage.schema.json
+          input: $(QA_RESULTS)/gate-pr.json
+          task: Triage every failed test listed in the gate result. Results are in context/qa-results/junit and context/app/test-results.
+          out: $(QA_RESULTS)/failure-triage.json
+          qaRoot: $(QA_ROOT)
+          condition: and(succeededOrFailed(), ne(variables['QA_TESTS_FAILED'], '0'), ne(variables['QA_TESTS_FAILED'], ''))
+
+      - template: run-agent.yml
+        parameters:
+          agent: security-analyst
+          schema: schemas/sarif-triage.schema.json
+          input: $(QA_RESULTS)/gate-pr.json
+          task: Triage the findings in context/qa-results/sarif against the code in context/app. Focus on critical and high first.
+          out: $(QA_RESULTS)/sarif-triage.json
+          qaRoot: $(QA_ROOT)
+          condition: and(succeededOrFailed(), ne(variables['QA_SARIF_TOTAL'], '0'), ne(variables['QA_SARIF_TOTAL'], ''))
+
+      - task: PublishPipelineArtifact@1
+        displayName: Publish QA evidence
+        condition: succeededOrFailed()
+        inputs:
+          targetPath: $(QA_RESULTS)
+          artifact: qa-results-pr

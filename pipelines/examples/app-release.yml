@@ -1,0 +1,98 @@
+# Example: release pipeline in an APPLICATION repository: deploy -> verify, per environment.
+# Configure in Azure DevOps (not YAML), under Pipelines > Environments:
+#   uat  : Approval (business UAT sign-off)
+#   prod : Approval (release manager) + "Query Azure Monitor alerts" check (post-deploy health)
+trigger:
+  branches:
+    include: [main]
+
+resources:
+  repositories:
+    - repository: qa
+      type: git
+      name: YourProject/qa-platform
+      ref: refs/heads/main
+
+variables:
+  - group: qa-platform
+
+stages:
+  - stage: deploy_dev
+    jobs:
+      - deployment: deploy
+        environment: dev
+        strategy:
+          runOnce:
+            deploy:
+              steps:
+                - script: echo "Your existing deployment steps for dev"
+
+  - stage: qa_dev
+    dependsOn: deploy_dev
+    jobs:
+      - template: pipelines/templates/qa-verify.yml@qa
+        parameters:
+          stage: dev
+          baseUrl: https://dev.example.com
+          suites:
+            - name: E2E smoke + impacted (Playwright, incl. axe and visual checks)
+              command: |
+                npm ci && npx playwright install --with-deps
+                PLAYWRIGHT_JUNIT_OUTPUT_FILE="$QA_RESULTS/junit/e2e.xml" npx playwright test --grep "@smoke|@impacted" --reporter=junit
+            - name: API fuzzing from OpenAPI (Schemathesis; verify CLI flags for your version)
+              command: |
+                docker run --rm --network host -v "$QA_RESULTS/junit:/out" schemathesis/schemathesis:stable \
+                  run "$QA_BASE_URL/openapi.json" --report junit --report-junit-path /out/schemathesis.xml
+            # Mobile (Maestro): maestro test .maestro/ --format junit --output "$QA_RESULTS/junit/maestro.xml"
+            # Desktop (.NET/FlaUI or Appium): dotnet test Desktop.Tests --logger "junit;LogFilePath=$QA_RESULTS/junit/desktop.xml"
+
+  - stage: deploy_uat
+    dependsOn: qa_dev
+    jobs:
+      - deployment: deploy
+        environment: uat
+        strategy:
+          runOnce:
+            deploy:
+              steps:
+                - script: echo "Your existing deployment steps for uat"
+
+  - stage: qa_uat
+    dependsOn: deploy_uat
+    jobs:
+      - template: pipelines/templates/qa-verify.yml@qa
+        parameters:
+          stage: uat
+          baseUrl: https://uat.example.com
+          releaseJudge: true
+          nightlyPipeline: qa-nightly   # heavy suite (full DAST, load, cross-browser) runs nightly on the uat candidate
+          suites:
+            - name: Full regression (Playwright)
+              command: |
+                npm ci && npx playwright install --with-deps
+                PLAYWRIGHT_JUNIT_OUTPUT_FILE="$QA_RESULTS/junit/regression.xml" npx playwright test --reporter=junit
+
+  - stage: deploy_prod
+    dependsOn: qa_uat
+    jobs:
+      - deployment: deploy
+        environment: prod            # human approval + alert check configured on the environment
+        strategy:
+          runOnce:
+            deploy:
+              steps:
+                - script: echo "Your existing deployment steps for prod"
+
+  - stage: qa_prod
+    dependsOn: deploy_prod
+    jobs:
+      - template: pipelines/templates/qa-verify.yml@qa
+        parameters:
+          stage: prod
+          baseUrl: https://www.example.com
+          pool: qa-prod              # isolated pool with a read-only identity
+          suites:
+            - name: Read-only smoke (synthetic account)
+              command: |
+                npm ci && npx playwright install --with-deps chromium
+                PLAYWRIGHT_JUNIT_OUTPUT_FILE="$QA_RESULTS/junit/prod-smoke.xml" npx playwright test --grep @prod-smoke --reporter=junit

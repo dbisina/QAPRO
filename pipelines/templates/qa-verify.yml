@@ -1,0 +1,145 @@
+# Jobs: post-deploy verification for one environment (dev | uat | prod). Usage: pipelines/examples/app-release.yml.
+# prod runs read-only: QA_ENV=prod switches the guard hook to its prod rule set, and ZAP is never run there.
+parameters:
+  - name: stage
+    type: string
+    values: [dev, uat, prod]
+  - name: baseUrl
+    type: string
+  - name: suites             # [{ name, command }]; each command writes JUnit to $QA_RESULTS/junit (SARIF to $QA_RESULTS/sarif)
+    type: object
+    default: []
+  - name: zapBaseline        # passive DAST; ignored for prod
+    type: boolean
+    default: true
+  - name: nightlyPipeline    # uat: name of the nightly heavy-suite pipeline (load, full DAST, cross-browser) whose evidence to include
+    type: string
+    default: ''
+  - name: releaseJudge       # uat/prod: Opus writes the advisory go/no-go report
+    type: boolean
+    default: false
+  - name: policy
+    type: string
+    default: tool-config/gates.json
+  - name: pool
+    type: string
+    default: qa-pr
+  - name: qaRepo
+    type: string
+    default: qa
+  - name: dependsOn
+    type: object
+    default: []
+
+jobs:
+  - job: qa_${{ parameters.stage }}
+    displayName: QA verify (${{ parameters.stage }})
+    dependsOn: ${{ parameters.dependsOn }}
+    pool:
+      name: ${{ parameters.pool }}
+    timeoutInMinutes: 60
+    variables:
+      QA_ROOT: $(Pipeline.Workspace)/s/qa
+      APP_DIR: $(Pipeline.Workspace)/s/qa/context/app
+      QA_RESULTS: $(Pipeline.Workspace)/s/qa/context/qa-results
+      QA_ENV: ${{ parameters.stage }}
+      QA_BASE_URL: ${{ parameters.baseUrl }}
+    steps:
+      - checkout: ${{ parameters.qaRepo }}
+        path: s/qa
+      - checkout: self
+        path: s/qa/context/app
+
+      - template: setup.yml
+        parameters:
+          qaRoot: $(QA_ROOT)
+
+      - bash: mkdir -p "$QA_RESULTS"/{junit,sarif}
+        displayName: Prepare results folders
+
+      - ${{ each suite in parameters.suites }}:
+        - bash: ${{ suite.command }}
+          displayName: ${{ suite.name }}
+          workingDirectory: $(APP_DIR)
+          continueOnError: true
+          env:
+            QA_BASE_URL: $(QA_BASE_URL)
+            QA_RESULTS: $(QA_RESULTS)
+            QA_ENV: $(QA_ENV)
+
+      - ${{ if and(parameters.zapBaseline, ne(parameters.stage, 'prod')) }}:
+        - bash: |
+            chmod 777 "$QA_RESULTS/sarif"
+            docker run --rm -e QA_BASE_URL -v "$QA_ROOT/tool-config:/zap/config:ro" -v "$QA_RESULTS/sarif:/zap/wrk:rw" \
+              ghcr.io/zaproxy/zaproxy:stable zap.sh -cmd -autorun /zap/config/zap-baseline.yaml
+          displayName: DAST baseline (ZAP, passive)
+          continueOnError: true
+
+      - ${{ if ne(parameters.nightlyPipeline, '') }}:
+        # Known gap (docs/HANDOFF.md): downloaded files get a fresh mtime, so the gate's freshness
+        # check cannot see the nightly run's age yet. Phase 2: have the nightly write a generated-at manifest.
+        - task: DownloadPipelineArtifact@2
+          displayName: Download nightly heavy-suite evidence
+          inputs:
+            source: specific
+            project: $(System.TeamProject)
+            pipeline: ${{ parameters.nightlyPipeline }}
+            runVersion: latest
+            artifact: qa-results-nightly
+            path: $(Agent.TempDirectory)/nightly
+        - bash: |
+            set -euo pipefail
+            for kind in junit sarif; do
+              if [ -d "$AGENT_TEMPDIRECTORY/nightly/$kind" ]; then
+                mkdir -p "$QA_RESULTS/$kind/nightly" && cp -rp "$AGENT_TEMPDIRECTORY/nightly/$kind/." "$QA_RESULTS/$kind/nightly/"
+              fi
+            done
+          displayName: Merge nightly evidence into the gate input
+
+      - task: PublishTestResults@2
+        displayName: Publish test results
+        condition: succeededOrFailed()
+        inputs:
+          testResultsFormat: JUnit
+          testResultsFiles: $(QA_RESULTS)/junit/**/*.xml
+          testRunTitle: QA ${{ parameters.stage }}
+          failTaskOnFailedTests: false
+
+      - bash: >
+          npx tsx src/bin/gate.ts --stage ${{ parameters.stage }} --policy "${{ parameters.policy }}"
+          --junit-dir "$QA_RESULTS/junit" --sarif-dir "$QA_RESULTS/sarif" --out "$QA_RESULTS/gate-${{ parameters.stage }}"
+        displayName: QA gate (deterministic)
+        workingDirectory: $(QA_ROOT)
+
+      - template: run-agent.yml
+        parameters:
+          agent: failure-triager
+          schema: schemas/failure-triage.schema.json
+          input: $(QA_RESULTS)/gate-${{ parameters.stage }}.json
+          task: Triage every failed test listed in the gate result for the ${{ parameters.stage }} environment.
+          out: $(QA_RESULTS)/failure-triage.json
+          qaRoot: $(QA_ROOT)
+          condition: and(succeededOrFailed(), ne(variables['QA_TESTS_FAILED'], '0'), ne(variables['QA_TESTS_FAILED'], ''))
+
+      - ${{ if parameters.releaseJudge }}:
+        - template: run-agent.yml
+          parameters:
+            agent: release-judge
+            schema: schemas/release-verdict.schema.json
+            input: $(QA_RESULTS)/gate-${{ parameters.stage }}.json
+            task: Review all evidence in context/qa-results for release $(Build.BuildNumber) and give your recommendation.
+            out: $(QA_RESULTS)/release-verdict.json
+            qaRoot: $(QA_ROOT)
+            condition: succeededOrFailed()
+        - bash: npx tsx src/bin/report.ts release-verdict --in "$QA_RESULTS/release-verdict.json" --out "$QA_RESULTS/release-verdict.md"
+          displayName: Show release recommendation
+          workingDirectory: $(QA_ROOT)
+          condition: and(succeededOrFailed(), ne(variables['QA_AI_GATES'], 'off'))
+          continueOnError: true
+
+      - task: PublishPipelineArtifact@1
+        displayName: Publish QA evidence
+        condition: succeededOrFailed()
+        inputs:
+          targetPath: $(QA_RESULTS)
+          artifact: qa-results-${{ parameters.stage }}-$(System.JobAttempt)
